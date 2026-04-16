@@ -287,18 +287,6 @@ export default {
 - **不做未来。** 没有 retry、没有缓存、没有 DAG、没有 Effect System。等实战反馈再决定是否加。
 - **this 就是 store。** 和 action 完全一致，零学习成本。
 
-## 发布策略
-
-0.1 **直接分发源码**，不打包。`package.json` 的 `main` / `module` / `exports` 都指向 `src/index.js`。
-
-理由：
-
-- 代码是纯 ES5 + ES2015（`var` + Promise），Vue 2.6 支持的环境都能直接跑
-- 单文件 200 行，打包的复杂度不值得
-- 用户调试时看到的就是源码，没有 sourcemap 的烦恼
-
-未来如果代码里出现需要转译的语法、需要 dev-only 代码剔除、或需要 UMD 格式，再引入构建产物。
-
 ---
 
 ## License

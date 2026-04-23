@@ -20,6 +20,20 @@
 npm install vue-page-runtime
 ```
 
+如果你担心“装上以后入口到底稳不稳”，这一版会把发布包固定成双入口：
+
+- `require('vue-page-runtime')` -> `dist/index.cjs`
+- `import taskPlugin from 'vue-page-runtime'` -> `dist/index.mjs`
+
+仓库里也补了两个最小脚本：
+
+```bash
+npm run build
+npm run smoke
+```
+
+`smoke` 会同时验证 CommonJS 和 ESM 的加载结果，先把“装了用不了”这个风险挡住。
+
 要求：
 
 - `vue@^2.6.0`

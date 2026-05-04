@@ -1,15 +1,15 @@
 {
   "name": "vue-page-runtime",
-  "version": "0.1.1",
+  "version": "0.2.0-alpha.0",
   "description": "vue-page-store 的任务编排插件 —— 在 definePageStore 中声明 tasks，获得自动运行 / 依赖顺序 / loading / abort",
   "author": "weijianjun",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/weijianjun/vue-page-runtime.git"
+    "url": "git+https://github.com/weijianjunwjj/vue-page-runtime.git"
   },
   "bugs": {
-    "url": "https://github.com/weijianjun/vue-page-runtime/issues"
+    "url": "https://github.com/weijianjunwjj/vue-page-runtime/issues"
   },
   "main": "dist/index.cjs.js",
   "module": "dist/index.esm.js",

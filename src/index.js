@@ -1,22 +1,53 @@
 /**
- * vue-page-runtime 0.1.0
+ * vue-page-runtime 0.2.0-alpha.0
  *
  * vue-page-store 的任务编排插件。
  *
- * 声明 tasks 字段 → 获得三件事：
- *   1. 按 trigger 自动运行
- *   2. 依赖顺序
- *   3. loading / abort
+ * 0.2 主线：
+ *   把页面数据流里的"节点语义"显性化。
  *
- * 仅此而已。
+ *   读 tasks 配置 = 知道页面怎么跑。
+ *
+ * 核心：
+ *   trigger  —— 谁叫醒这个 task
+ *   canRun   —— 唤起后能不能执行           (0.2 新增)
+ *   reset    —— 被 skip 时怎么清理自己      (0.2 新增)
+ *   loading / abort —— 执行状态与并发取消
+ *
+ * 高级：
+ *   deps     —— 极少数"本次执行前必须先 await 前置动作"的场景
+ *
+ * 0.2 完全向后兼容 0.1：
+ *   不写 canRun / reset 等同于 0.1 行为。
+ *
+ * 不做：缓存 / stale / retry / debounce / queryKey /
+ *      返回值存储 / 自动监听 canRun 依赖字段
  */
+
+// ---- 内部 skip 标记 ----
+//
+// 内部语义，不暴露公开 API。
+// 外部 $task.run() resolve 时会被剥成 undefined。
+
+var SKIPPED = { __vpr_skipped__: true }
+
+function isSkipped (result) {
+  return result != null && result.__vpr_skipped__ === true
+}
+
+// ---- dev 检查 ----
+
+function isDev () {
+  return typeof process !== 'undefined' &&
+    process.env &&
+    process.env.NODE_ENV !== 'production'
+}
 
 /**
  * 创建插件实例。
  *
- * 支持两种用法：
  *   registerPlugin(taskPlugin)
- *   registerPlugin(taskPlugin({ onError }))
+ *   registerPlugin(taskPlugin.create({ onError }))
  *
  * @param {Object} [config]
  * @param {Function} [config.onError] - (error, key, store) => void
@@ -33,23 +64,54 @@ function createPlugin (config) {
 
       if (keys.length === 0) return
 
-      // ---- 校验 ----
+      // ---- 配置校验 ----
+      //
+      // run: 必填且必须是函数 → throw
+      // deps: 可选；声明了就必须是数组、且 key 必须存在 → throw
+      // canRun / reset: 可选；声明了就必须是函数 → dev warn
 
       keys.forEach(function (key) {
         var def = taskDefs[key]
+
         if (typeof def.run !== 'function') {
           throw new Error(
             '[vue-page-runtime] 任务 "' + key + '" 缺少 run 函数'
           )
         }
+
+        if (def.deps !== undefined) {
+          if (!Array.isArray(def.deps)) {
+            throw new Error(
+              '[vue-page-runtime] 任务 "' + key + '" 的 deps 必须是数组'
+            )
+          }
+          def.deps.forEach(function (dep) {
+            if (!taskDefs[dep]) {
+              throw new Error(
+                '[vue-page-runtime] 任务 "' + key + '" 的 deps 中包含不存在的 task "' + dep + '"'
+              )
+            }
+          })
+        }
+
+        if (isDev()) {
+          if (def.canRun !== undefined && typeof def.canRun !== 'function') {
+            console.warn(
+              '[vue-page-runtime] task "' + key + '" 的 canRun 必须是函数'
+            )
+          }
+          if (def.reset !== undefined && typeof def.reset !== 'function') {
+            console.warn(
+              '[vue-page-runtime] task "' + key + '" 的 reset 必须是函数'
+            )
+          }
+        }
       })
 
-      // 命名冲突提示
-      if (typeof process !== 'undefined' &&
-          process.env &&
-          process.env.NODE_ENV !== 'production') {
+      // ---- 命名冲突提示 ----
+
+      if (isDev()) {
         var actions = store.$options && store.$options.actions
-        // page-store 把 actions 方法直接挂在 store 上，这里通过名字检测冲突
         keys.forEach(function (key) {
           if (actions && typeof actions[key] === 'function') {
             console.warn(
@@ -60,7 +122,6 @@ function createPlugin (config) {
       }
 
       // ---- 响应式 loading ----
-      // 直接写到 store.$loading（和 action 的 $loading 共享命名空间）
 
       keys.forEach(function (key) {
         if (store.$loading[key] === undefined) {
@@ -68,16 +129,39 @@ function createPlugin (config) {
         }
       })
 
-      // ---- 任务内部状态（非响应式，运行时追踪）----
+      // ---- 任务内部状态 ----
 
       var taskStateMap = {}
       keys.forEach(function (key) {
-        taskStateMap[key] = {
-          controller: null
-        }
+        taskStateMap[key] = { controller: null }
       })
 
+      // ---- 错误上抛 ----
+
+      function handleError (err, key) {
+        if (onError) {
+          try { onError(err, key, store) }
+          catch (e) { console.error(e) }
+        } else {
+          console.error('[vue-page-runtime] 任务 "' + key + '" 执行失败:', err)
+        }
+      }
+
+      // ---- reset ----
+
+      function callReset (def, key) {
+        if (typeof def.reset !== 'function') return
+        try {
+          def.reset.call(store)
+        } catch (err) {
+          handleError(err, key)
+        }
+      }
+
       // ---- abort ----
+      //
+      // abort 只负责"取消正在跑的请求 + 关 loading"。
+      // 不调 reset。reset 只在 skip 路径上触发。
 
       function abortTask (key) {
         if (!taskStateMap[key]) return
@@ -93,72 +177,120 @@ function createPlugin (config) {
         keys.forEach(function (key) { abortTask(key) })
       }
 
-      // ---- run ----
+      // ---- 协议核心 ----
+      //
+      // runTaskInternal(key)
+      //
+      //   1. 存在性 / disposed 检查
+      //   2. abort previous          ← 必须在 canRun 之前
+      //   3. canRun
+      //        false → reset + skip (Promise resolve SKIPPED，loading 不开)
+      //        抛错  → onError + resolve undefined（不算 skip，不触发 reset）
+      //   4. 创建 controller + loading = true
+      //   5. 跑 deps
+      //   6. 任一 dep skipped → reset + loading=false + skip
+      //   7. run
+      //   8. 完成: loading=false / 失败: onError
 
-      function runTask (key) {
+      function runTaskInternal (key) {
         if (!taskDefs[key]) {
-          if (typeof process !== 'undefined' &&
-              process.env &&
-              process.env.NODE_ENV !== 'production') {
+          if (isDev()) {
             console.warn('[vue-page-runtime] 任务 "' + key + '" 不存在')
           }
-          return Promise.resolve()
+          return Promise.resolve(undefined)
         }
 
-        if (store.$disposed) return Promise.resolve()
+        if (store.$disposed) return Promise.resolve(undefined)
 
         var def = taskDefs[key]
         var state = taskStateMap[key]
 
-        // 1. abort 上一次
+        // 2. abort previous —— 在 canRun 之前
+        //    用户清空条件后重新触发：哪怕 canRun=false 不再发新请求，
+        //    旧请求也必须立刻取消，避免旧响应回来污染状态。
         abortTask(key)
 
-        // 2. 新的 controller
+        // 3. canRun
+        if (typeof def.canRun === 'function') {
+          var canRunResult
+          try {
+            canRunResult = def.canRun.call(store)
+          } catch (err) {
+            handleError(err, key)
+            return Promise.resolve(undefined)
+          }
+
+          if (!canRunResult) {
+            callReset(def, key)
+            return Promise.resolve(SKIPPED)
+          }
+        }
+
+        // 4. controller + loading
         var controller = typeof AbortController !== 'undefined'
           ? new AbortController()
           : { signal: null, abort: function () {} }
         state.controller = controller
         store.$loading[key] = true
 
-        // 3. 等依赖
+        // 5. deps
         var deps = def.deps || []
         var depPromise = deps.length > 0
-          ? Promise.all(deps.map(function (dep) { return runTask(dep) }))
-          : Promise.resolve()
+          ? Promise.all(deps.map(function (dep) { return runTaskInternal(dep) }))
+          : Promise.resolve([])
 
-        return depPromise.then(function () {
-          // 依赖跑完后检查：自己是否还是当前执行
-          // （可能依赖跑的时候，外部又调了一次 $task.run(key)，abort 了我们）
-          if (state.controller !== controller || store.$disposed) return
+        return depPromise.then(function (depResults) {
+          // 6. dep skipped 传播
+          var hasSkippedDep = depResults.some(isSkipped)
+          if (hasSkippedDep) {
+            if (state.controller === controller) {
+              store.$loading[key] = false
+              state.controller = null
+            }
+            callReset(def, key)
+            return SKIPPED
+          }
 
+          // 当前执行已被取代或 store 已销毁 → 静默
+          if (state.controller !== controller || store.$disposed) {
+            return SKIPPED
+          }
+
+          // 7. run
           return def.run.call(store, { signal: controller.signal })
         }).then(function (result) {
+          // 8. 完成
           if (state.controller === controller) {
             store.$loading[key] = false
             state.controller = null
           }
           return result
         }).catch(function (err) {
-          // 如果这次执行已经被取代/取消了 → 静默
-          if (state.controller !== controller) return
+          // 已被取代 → 静默
+          if (state.controller !== controller) return SKIPPED
 
-          // 还是当前执行 → 清理 + 抛给 onError
+          // run 抛错 → onError，不 reset
           store.$loading[key] = false
           state.controller = null
+          handleError(err, key)
+          return undefined
+        })
+      }
 
-          if (onError) {
-            try { onError(err, key, store) }
-            catch (e) { console.error(e) }
-          } else {
-            console.error('[vue-page-runtime] 任务 "' + key + '" 执行失败:', err)
-          }
+      // ---- 外部入口 ----
+      //
+      // 把内部 SKIPPED 标记剥成 undefined，对外不暴露 skip 概念。
+
+      function runTaskExternal (key) {
+        return runTaskInternal(key).then(function (result) {
+          return isSkipped(result) ? undefined : result
         })
       }
 
       // ---- 挂载 API ----
 
       store.$task = {
-        run: runTask,
+        run: runTaskExternal,
         abort: abortTask
       }
 
@@ -173,7 +305,7 @@ function createPlugin (config) {
           return t === trigger
         })
         if (toRun.length === 0) return Promise.resolve()
-        return Promise.all(toRun.map(function (k) { return runTask(k) }))
+        return Promise.all(toRun.map(function (k) { return runTaskInternal(k) }))
       }
 
       // ---- 生命周期钩子 ----
@@ -188,9 +320,11 @@ function createPlugin (config) {
           return p.then(function () { return runByTrigger('enter') })
         },
         leave: function () {
+          // leave 只 abort，不 reset
           abortAll()
         },
         destroy: function () {
+          // destroy 只 abort，不 reset
           abortAll()
         }
       }
@@ -198,19 +332,9 @@ function createPlugin (config) {
   }
 }
 
-// ---- 默认导出：可直接用，也可带配置用 ----
+// ---- 默认导出 ----
 
 var defaultPlugin = createPlugin()
-
-// registerPlugin(taskPlugin) 直接用
 defaultPlugin.create = createPlugin
-
-// registerPlugin(taskPlugin({ onError })) 也能用
-// 通过把函数本身变成"可调用对象" —— 但 JS 做不到。
-// 换个思路：导出 plugin 对象，create 方法用于定制。
-//
-// 用户要带配置时：
-//   import taskPlugin from 'vue-page-runtime'
-//   registerPlugin(taskPlugin.create({ onError: ... }))
 
 export default defaultPlugin

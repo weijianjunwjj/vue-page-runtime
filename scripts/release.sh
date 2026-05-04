@@ -24,15 +24,21 @@ if [ "$current_ver" != "$ver" ]; then
   npm version "$ver" --no-git-tag-version
 fi
 
+publish_tag="latest"
+if [[ "$ver" == *-* ]]; then
+  prerelease="${ver#*-}"
+  publish_tag="${prerelease%%.*}"
+fi
+
 npm run build
 
 git add -A
 if ! git diff --cached --quiet; then
   git commit -m "chore: release v$ver"
 fi
-npm publish --registry https://registry.npmjs.org
+npm publish --registry https://registry.npmjs.org --tag "$publish_tag"
 git tag "v$ver"
 git push
 git push --tags
 
-echo "Released v$ver"
+echo "Released v$ver with npm tag $publish_tag"

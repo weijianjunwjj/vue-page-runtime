@@ -20,19 +20,20 @@
 npm install vue-page-runtime
 ```
 
-如果你担心“装上以后入口到底稳不稳”，这一版会把发布包固定成双入口：
+发布包固定为 Rollup 产物：
 
-- `require('vue-page-runtime')` -> `dist/index.cjs`
-- `import taskPlugin from 'vue-page-runtime'` -> `dist/index.mjs`
+- CommonJS：`dist/index.cjs.js`
+- ESM：`dist/index.esm.js`
+- UMD：`dist/index.umd.js`
+- UMD min：`dist/index.umd.min.js`
 
-仓库里也补了两个最小脚本：
+同时保留 `dist/index.cjs` / `dist/index.mjs` 作为 package `exports` 入口，兼容旧版引用路径。
+
+构建：
 
 ```bash
 npm run build
-npm run smoke
 ```
-
-`smoke` 会同时验证 CommonJS 和 ESM 的加载结果，先把“装了用不了”这个风险挡住。
 
 要求：
 

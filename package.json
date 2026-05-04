@@ -1,6 +1,6 @@
 {
   "name": "vue-page-runtime",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.1",
   "description": "vue-page-store 的任务编排插件 —— 在 definePageStore 中声明 tasks，获得自动运行 / 依赖顺序 / loading / abort",
   "author": "weijianjun",
   "license": "MIT",
@@ -11,8 +11,10 @@
   "bugs": {
     "url": "https://github.com/weijianjun/vue-page-runtime/issues"
   },
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.mjs",
+  "main": "dist/index.cjs.js",
+  "module": "dist/index.esm.js",
+  "unpkg": "dist/index.umd.js",
+  "types": "dist/index.d.ts",
   "files": [
     "dist",
     "src",
@@ -21,19 +23,26 @@
   ],
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
       "require": "./dist/index.cjs",
       "default": "./dist/index.cjs"
-    }
+    },
+    "./dist/*": "./dist/*",
+    "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "node scripts/build.js",
-    "prepare": "node scripts/build.js",
-    "smoke": "node scripts/smoke.js"
+    "build": "rollup -c rollup.config.mjs && node scripts/copy-types.js",
+    "prepublishOnly": "npm run build",
+    "release": "bash scripts/release.sh"
   },
   "peerDependencies": {
     "vue": "^2.6.0",
     "vue-page-store": "^0.5.0"
+  },
+  "devDependencies": {
+    "@rollup/plugin-terser": "^0.4.4",
+    "rollup": "^3.29.4"
   },
   "keywords": [
     "vue",

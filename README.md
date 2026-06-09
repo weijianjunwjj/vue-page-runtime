@@ -281,6 +281,26 @@ reset 不是生命周期清理垃圾桶。它的语义只有一条:**本轮 task
 - 进入 deps 阶段:loading=true(此时哪怕在等 deps 也算运行中)
 - dep 被 skip:loading=false
 
+### abort 的边界 —— signal 必须透传
+
+**常见误解:以为 `abort` 之后状态就干净了。** 不是。abort(来自重复 run / `leave` / `destroy`)取消的是**本次 run 的外壳——返回值 + loading**,而**不是 run 函数体里已经发生的赋值**。runtime 能丢弃 run 的返回值、关掉 loading,但它没有能力回滚你在 run 里已经写进 `$source` 的那一行。
+
+所以「离开页面后,慢响应不污染已离开的页面」这个保证**不是 runtime 单方面给的**,而是要求你在 `run` 里把 `signal` 透传给可中断的请求:
+
+```js
+async run ({ signal }) {
+  // ✅ signal 透传 → abort 时请求 reject,await 抛出,下面这行不会执行
+  this.$source.list = await api.fetch({ signal })
+}
+
+async run ({ signal }) {
+  // ❌ 没透传 signal → 页面已离开,但慢响应回来仍会写入,污染状态
+  this.$source.list = await api.fetch()
+}
+```
+
+如果你的请求层不支持 `AbortSignal`,abort 只能停 loading,**挡不住赋值污染**——这种情况需要你在 run 内自行判断「是否仍在当前页面 / 本次请求是否仍有效」后再写入。
+
 ---
 
 ## 生命周期行为
@@ -293,6 +313,10 @@ mounted / activated
 deactivated / beforeDestroy
   └→ abort 所有正在运行的任务(不调 reset)
 ```
+
+> enter 钩子会先 **await 完所有** `trigger: 'init'` 任务,再开始跑 enter 任务。
+> 因此首屏的 enter 任务会多等一个 init 往返(init 的请求回来后 enter 才启动)。
+> 这是符合「先 init 后 enter」语义的预期行为,不是缺陷;若你不希望 enter 被某个慢 init 阻塞,就别把 enter 用不到的资源放进 init。
 
 ---
 
@@ -307,6 +331,8 @@ deps = run-before
 ```
 
 不是 `ready-check`,不是 `once`,不是 `cache`,不是初始化资源检查。
+
+> ⚠️ **最容易踩的反直觉:`deps` 每次执行前都重跑。** 给 `fetchList` 写 `deps: ['initOptions']`,会让**每次查询都重拉一遍 options**——而不是"用一下已经加载好的 options"。init-once 的资源用 `trigger: 'init'`,ready 判断用 `canRun`,都别用 `deps`。详见下方[不适合的场景](#不适合的场景)。
 
 ### 适合的场景
 
@@ -359,6 +385,8 @@ exportSensitiveList:  { deps: ['refreshPermissionContext'], async run () {} }
 ### 不适合的场景
 
 **初始化字典 / 选项 / 首屏资源**(典型反例):
+
+> **这是第一次接入时最容易顺手写错的一处**(作者本人首次真实接入即踩):写 `fetchList` 时会下意识加 `deps: ['initOptions']`,以为"查询前先确保选项就绪"。但 `deps = run-before,每次都跑`——结果是每次查询都重拉一遍 options。**init-once 的东西不是依赖,是前置一次性资源,用 `trigger: 'init'`;ready 判断用 `canRun`。**
 
 ```js
 // ❌ 错误:每次拉版本前都重新拉一遍产品列表

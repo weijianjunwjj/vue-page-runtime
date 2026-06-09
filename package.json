@@ -1,6 +1,6 @@
 {
   "name": "vue-page-runtime",
-  "version": "0.2.0-alpha.0",
+  "version": "0.2.0-alpha.1",
   "description": "vue-page-store 的任务编排插件 —— 在 definePageStore 中声明 tasks，获得自动运行 / 依赖顺序 / loading / abort",
   "author": "weijianjun",
   "license": "MIT",

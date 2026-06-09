@@ -50,7 +50,7 @@ function isDev () {
  *   registerPlugin(taskPlugin.create({ onError }))
  *
  * @param {Object} [config]
- * @param {Function} [config.onError] - (error, key, store) => void
+ * @param {Function} [config.onError] - (error, key, host) => void
  */
 function createPlugin (config) {
   var onError = (config && config.onError) || null
@@ -58,8 +58,30 @@ function createPlugin (config) {
   return {
     name: 'tasks',
 
-    install: function (store, taskDefs, ctx) {
-      var Vue = ctx.Vue
+    install: function (host, taskDefs, ctx) {
+      // ---- host 环境探测 ----
+      //
+      // vue-page-store v0.5.x → ctx = { Vue }                    (Vue2, hasVueSet=true)
+      // vue-page-scope v0.1.0 → ctx = { framework:'vue3', ... }  (Vue3, 无 Vue)
+      var isVue3 = !!(ctx && ctx.framework === 'vue3')
+      var Vue = ctx && ctx.Vue
+      var hasVueSet = !!(Vue && typeof Vue.set === 'function')
+      if (isDev() && !isVue3 && !hasVueSet) {
+        console.warn('[vue-page-runtime] unknown host ctx, fallback to direct assignment for $loading.')
+      }
+
+      // ---- 新增 loading key 的响应式初始化 ----
+      //
+      // 只用于"首次给 $loading 新增 key"。运行中切 loading 仍直接赋值
+      // （Vue2 下 key 已被 Vue.set 注册过；Vue3 下 reactive 直接响应）。
+      function setReactiveKey (target, key, val) {
+        if (!isVue3 && hasVueSet) {
+          Vue.set(target, key, val)
+        } else {
+          target[key] = val
+        }
+      }
+
       var keys = Object.keys(taskDefs || {})
 
       if (keys.length === 0) return
@@ -73,7 +95,7 @@ function createPlugin (config) {
       keys.forEach(function (key) {
         var def = taskDefs[key]
 
-        if (typeof def.run !== 'function') {
+        if (!def || typeof def.run !== 'function') {
           throw new Error(
             '[vue-page-runtime] 任务 "' + key + '" 缺少 run 函数'
           )
@@ -111,11 +133,12 @@ function createPlugin (config) {
       // ---- 命名冲突提示 ----
 
       if (isDev()) {
-        var actions = store.$options && store.$options.actions
         keys.forEach(function (key) {
-          if (actions && typeof actions[key] === 'function') {
+          if (typeof host[key] === 'function') {
             console.warn(
-              '[vue-page-runtime] task "' + key + '" has the same name as an action.'
+              '[vue-page-runtime] task "' + key +
+              '" has the same name as a function field on host. ' +
+              'If this is an action, $loading.' + key + ' may be shared.'
             )
           }
         })
@@ -124,8 +147,8 @@ function createPlugin (config) {
       // ---- 响应式 loading ----
 
       keys.forEach(function (key) {
-        if (store.$loading[key] === undefined) {
-          Vue.set(store.$loading, key, false)
+        if (host.$loading[key] === undefined) {
+          setReactiveKey(host.$loading, key, false)
         }
       })
 
@@ -140,7 +163,7 @@ function createPlugin (config) {
 
       function handleError (err, key) {
         if (onError) {
-          try { onError(err, key, store) }
+          try { onError(err, key, host) }
           catch (e) { console.error(e) }
         } else {
           console.error('[vue-page-runtime] 任务 "' + key + '" 执行失败:', err)
@@ -152,7 +175,7 @@ function createPlugin (config) {
       function callReset (def, key) {
         if (typeof def.reset !== 'function') return
         try {
-          def.reset.call(store)
+          def.reset.call(host)
         } catch (err) {
           handleError(err, key)
         }
@@ -169,7 +192,7 @@ function createPlugin (config) {
         if (state.controller) {
           state.controller.abort()
           state.controller = null
-          store.$loading[key] = false
+          host.$loading[key] = false
         }
       }
 
@@ -200,7 +223,7 @@ function createPlugin (config) {
           return Promise.resolve(undefined)
         }
 
-        if (store.$disposed) return Promise.resolve(undefined)
+        if (host.$disposed) return Promise.resolve(undefined)
 
         var def = taskDefs[key]
         var state = taskStateMap[key]
@@ -214,7 +237,7 @@ function createPlugin (config) {
         if (typeof def.canRun === 'function') {
           var canRunResult
           try {
-            canRunResult = def.canRun.call(store)
+            canRunResult = def.canRun.call(host)
           } catch (err) {
             handleError(err, key)
             return Promise.resolve(undefined)
@@ -231,7 +254,7 @@ function createPlugin (config) {
           ? new AbortController()
           : { signal: null, abort: function () {} }
         state.controller = controller
-        store.$loading[key] = true
+        host.$loading[key] = true
 
         // 5. deps
         var deps = def.deps || []
@@ -244,24 +267,24 @@ function createPlugin (config) {
           var hasSkippedDep = depResults.some(isSkipped)
           if (hasSkippedDep) {
             if (state.controller === controller) {
-              store.$loading[key] = false
+              host.$loading[key] = false
               state.controller = null
             }
             callReset(def, key)
             return SKIPPED
           }
 
-          // 当前执行已被取代或 store 已销毁 → 静默
-          if (state.controller !== controller || store.$disposed) {
+          // 当前执行已被取代或 host 已销毁 → 静默
+          if (state.controller !== controller || host.$disposed) {
             return SKIPPED
           }
 
           // 7. run
-          return def.run.call(store, { signal: controller.signal })
+          return def.run.call(host, { signal: controller.signal })
         }).then(function (result) {
           // 8. 完成
           if (state.controller === controller) {
-            store.$loading[key] = false
+            host.$loading[key] = false
             state.controller = null
           }
           return result
@@ -270,7 +293,7 @@ function createPlugin (config) {
           if (state.controller !== controller) return SKIPPED
 
           // run 抛错 → onError，不 reset
-          store.$loading[key] = false
+          host.$loading[key] = false
           state.controller = null
           handleError(err, key)
           return undefined
@@ -289,7 +312,7 @@ function createPlugin (config) {
 
       // ---- 挂载 API ----
 
-      store.$task = {
+      host.$task = {
         run: runTaskExternal,
         abort: abortTask
       }
@@ -299,7 +322,7 @@ function createPlugin (config) {
       var initDone = false
 
       function runByTrigger (trigger) {
-        if (store.$disposed) return Promise.resolve()
+        if (host.$disposed) return Promise.resolve()
         var toRun = keys.filter(function (k) {
           var t = taskDefs[k].trigger || 'enter'
           return t === trigger

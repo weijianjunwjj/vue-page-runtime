@@ -458,7 +458,7 @@ registerPlugin(taskPlugin.create({
 task 和 action 同名时,dev 环境会打印 warn:
 
 ```
-[vue-page-runtime] task "search" has the same name as an action.
+[vue-page-runtime] task "search" has the same name as a function field on host. If this is an action, $loading.search may be shared.
 ```
 
 因为 action 的 loading 和 task 的 loading 都写入 `store.$loading`,同名会相互覆盖。改一个名字即可。

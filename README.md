@@ -66,16 +66,21 @@ npm install vue-page-runtime@alpha
 npm run build
 ```
 
-要求:
+Host(二选一,任选其一作为运行宿主):
 
-- `vue@^2.6.0`
-- `vue-page-store@^0.5.0`
+- **Vue 2.6** —— `vue-page-store@^0.5.0`
+- **Vue 3** —— `vue-page-scope@^0.1.0` · **Vue 3 host support is experimental in alpha**
+
+> `vue-page-runtime` 自身不直接依赖 vue,它通过 host 在 install 时注入的 ctx 获取响应式能力。
+> Vue 3 适配目前只过了最小 smoke,尚未在真实业务页面验证,请勿在生产依赖其稳定性。
 
 ---
 
 ## 接入(3 步)
 
 **1. 全局注册一次**
+
+Vue 2(`vue-page-store`):
 
 ```js
 import { registerPlugin } from 'vue-page-store'
@@ -84,7 +89,16 @@ import taskPlugin from 'vue-page-runtime'
 registerPlugin(taskPlugin)
 ```
 
-放在 `main.js` 顶部即可。
+Vue 3(`vue-page-scope`,experimental):
+
+```js
+import { registerPlugin } from 'vue-page-scope'
+import taskPlugin from 'vue-page-runtime'
+
+registerPlugin(taskPlugin)
+```
+
+两边 `registerPlugin(taskPlugin)` 写法完全一致,只是 `registerPlugin` 的来源不同。放在 `main.js` 顶部即可。
 
 **2. 在 store 中声明 tasks**
 
@@ -445,11 +459,13 @@ import { registerPlugin } from 'vue-page-store'
 import taskPlugin from 'vue-page-runtime'
 
 registerPlugin(taskPlugin.create({
-  onError (error, key, store) {
-    reportToSentry(error, { task: key, storeId: store.$id })
+  onError (error, key, host) {
+    reportToSentry(error, { task: key, hostId: host.$id })
   }
 }))
 ```
+
+第三参 `host` 是当前运行宿主:在 `vue-page-store` 中是 store,在 `vue-page-scope` 中是 scope。`this` 在 `canRun` / `reset` / `run` 内同样指向该 host。
 
 ---
 

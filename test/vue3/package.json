@@ -1,0 +1,13 @@
+{
+  "name": "vpr-vue3-smoke",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Isolated Vue3 smoke env for vue-page-runtime host adapter. Keeps vue@3 + vue-page-scope OUT of the main node_modules (which stays vue@2.7.16).",
+  "type": "module",
+  "dependencies": {
+    "@vue/test-utils": "^2.4.11",
+    "jsdom": "^29.1.1",
+    "vue": "^3.5.35",
+    "vue-page-scope": "^0.1.1"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "vue2-runtime-lab",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Real-page Vue2 validation lab for vue-page-runtime@0.2.0-alpha.1. Isolated; does not affect the main package node_modules or build.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "verify": "node verify/headless.mjs"
+  },
+  "dependencies": {
+    "vue": "2.6.14",
+    "vue-page-runtime": "file:./vendor/vue-page-runtime-0.2.0-alpha.1.tgz",
+    "vue-page-store": "0.5.3",
+    "vue-router": "3.6.5"
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0",
+    "vite": "^4.5.3",
+    "vite-plugin-vue2": "^2.0.3",
+    "vue-template-compiler": "^2.6.14"
+  }
+}
